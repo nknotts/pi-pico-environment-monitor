@@ -4,3 +4,6 @@
 [submodule "thirdparty/FreeRTOS-Kernel"]
 	path = thirdparty/FreeRTOS-Kernel
 	url = https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+[submodule "thirdparty/BME68x-Sensor-API"]
+	path = thirdparty/BME68x-Sensor-API
+	url = https://github.com/BoschSensortec/BME68x-Sensor-API
