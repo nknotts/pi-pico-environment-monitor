@@ -5,11 +5,11 @@
 
 // allow override in some examples
 #ifndef NO_SYS
-#define NO_SYS 1
+#define NO_SYS 0
 #endif
 // allow override in some examples
 #ifndef LWIP_SOCKET
-#define LWIP_SOCKET 0
+#define LWIP_SOCKET 1
 #endif
 #if PICO_CYW43_ARCH_POLL
 #define MEM_LIBC_MALLOC 1
@@ -84,3 +84,12 @@
 #define PPP_DEBUG LWIP_DBG_OFF
 #define SLIP_DEBUG LWIP_DBG_OFF
 #define DHCP_DEBUG LWIP_DBG_OFF
+
+#define TCPIP_THREAD_STACKSIZE 1024
+#define DEFAULT_THREAD_STACKSIZE 1024
+#define DEFAULT_RAW_RECVMBOX_SIZE 8
+#define TCPIP_MBOX_SIZE 8
+#define LWIP_TIMEVAL_PRIVATE 0
+
+// not necessary, can be done either way
+#define LWIP_TCPIP_CORE_LOCKING_INPUT 1

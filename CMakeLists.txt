@@ -2,9 +2,11 @@
 cmake_minimum_required(VERSION 3.12)
  
 set(PICO_BOARD pico_w)
+set(FREERTOS_KERNEL_PATH ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/FreeRTOS-Kernel)
 
 
 include(pico_sdk_import.cmake)
+include(FreeRTOS_Kernel_import.cmake)
  
 project(EnviroMqtt VERSION 1.0.0)
 
@@ -21,7 +23,9 @@ target_include_directories(EnviroMqtt PUBLIC src)
 target_link_libraries(EnviroMqtt PRIVATE 
     pico_stdlib
     hardware_i2c
-    pico_cyw43_arch_lwip_threadsafe_background
+    pico_cyw43_arch_lwip_sys_freertos
+    pico_lwip_iperf
+    FreeRTOS-Kernel-Heap4 # FreeRTOS kernel and dynamic heap
     fmt)
  
 pico_sdk_init()
