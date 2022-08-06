@@ -21,11 +21,8 @@ static int scan_result(void* env, const cyw43_ev_scan_result_t* result) {
 	return 0;
 }
 
-constexpr const unsigned int LED_PIN = 25;
-
 int main() {
-	bi_decl(bi_program_description("First Blink"));
-	bi_decl(bi_1pin_with_name(LED_PIN, "On-board LED"));
+	bi_decl(bi_program_description("Environment MQTT"));
 
 	stdio_init_all();
 
