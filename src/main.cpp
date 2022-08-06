@@ -6,7 +6,6 @@
 #include <pico/cyw43_arch.h>
 #include <pico/stdlib.h>
 
-#define FMT_HEADER_ONLY
 #include <fmt/format.h>
 
 #include <stdio.h>
