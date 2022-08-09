@@ -1,20 +1,27 @@
 #include "BME680.hpp"
 
+#include <log/Logger.hpp>
+
 #include <hardware/i2c.h>
 #include <pico/stdlib.h>
 
 #include <FreeRTOS.h>
 #include <task.h>
 
-#include <fmt/core.h>
-
 namespace sensor {
 
 namespace {
 
 int8_t i2c_read(uint8_t reg_addr, uint8_t* reg_data, uint32_t len, void* intf) {
-	i2c_inst_t* i2c = (i2c_inst_t*)intf;
-	int num_read = i2c_read_blocking(i2c, reg_addr, reg_data, len, true);
+	BME680::I2cDevice* dev = (BME680::I2cDevice*)intf;
+
+	int num_write = i2c_write_blocking(dev->i2c, dev->device_address, &reg_addr, 1, true);
+	if (num_write != 1) {
+		return -1;
+	}
+
+	int num_read = i2c_read_blocking(dev->i2c, dev->device_address, reg_data, len, false);
+	log::debug("i2c_read: reg 0x{:02X}, len {}, num_read {}", reg_addr, len, num_read);
 	return num_read == len ? 0 : -1;
 }
 
@@ -22,8 +29,14 @@ int8_t i2c_write(uint8_t reg_addr,
                  const uint8_t* reg_data,
                  uint32_t len,
                  void* intf) {
-	i2c_inst_t* i2c = (i2c_inst_t*)intf;
-	int num_write = i2c_write_blocking(i2c, reg_addr, reg_data, len, true);
+	BME680::I2cDevice* dev = (BME680::I2cDevice*)intf;
+
+	int num_write = i2c_write_blocking(dev->i2c, dev->device_address, &reg_addr, 1, true);
+	if (num_write != 1) {
+		return -1;
+	}
+
+	num_write = i2c_write_blocking(dev->i2c, dev->device_address, reg_data, len, false);
 	return num_write == len ? 0 : -1;
 }
 
@@ -36,35 +49,26 @@ void delay_usec(uint32_t us, void* intf_ptr) {
 
 } // namespace
 
-BME680::BME680() {
-
-	const uint sda_pin = 16;
-	const uint scl_pin = 17;
-
-	// Ports
-	i2c = i2c0;
-
-	// Buffer to store raw reads
-	uint8_t data[6];
-
-	// Initialize I2C port at 400 kHz
-	i2c_init(i2c, 400 * 1000);
-
-	// Initialize I2C pins
-	gpio_set_function(sda_pin, GPIO_FUNC_I2C);
-	gpio_set_function(scl_pin, GPIO_FUNC_I2C);
-
-	dev.chip_id = 0x77;
+BME680::BME680(i2c_inst_t* i2c, uint8_t device_address) : i2c_dev{i2c, device_address} {
+	dev.chip_id = i2c_dev.device_address;
 	dev.intf = BME68X_I2C_INTF;
-	dev.intf_ptr = (void*)i2c;
+	dev.intf_ptr = (void*)&i2c_dev;
 	dev.read = &i2c_read;
 	dev.write = &i2c_write;
+	dev.delay_us = &delay_usec;
 	dev.amb_temp = 25; /* The ambient temperature in deg C is used for
 	                         defining the heater temperature */
-	dev.delay_us = delay_usec;
 
-	int8_t rslt = bme68x_init(&dev);
-	fmt::print("Init Result: {}", rslt);
+	Init();
+}
+
+bool BME680::Init() {
+	int8_t ret = bme68x_init(&dev);
+	is_init = (ret == BME68X_OK);
+	if (!is_init) {
+		log::error("BME680: bme68x_init failed ({})", ret);
+		return is_init;
+	}
 
 	bme68x_conf gas_conf;
 	gas_conf.filter = BME68X_FILTER_SIZE_3;
@@ -72,27 +76,36 @@ BME680::BME680() {
 	gas_conf.os_hum = BME68X_OS_2X;
 	gas_conf.os_pres = BME68X_OS_4X;
 	gas_conf.os_temp = BME68X_OS_8X;
-	rslt = bme68x_set_conf(&gas_conf, &dev);
-	fmt::print("SetConf Result: {}", rslt);
+	ret = bme68x_set_conf(&gas_conf, &dev);
+	is_init = (ret == BME68X_OK);
+	if (!is_init) {
+		log::error("BME680: bme68x_set_conf failed ({})", ret);
+		return is_init;
+	}
 
 	bme68x_heatr_conf gas_heatr_conf;
 	gas_heatr_conf.enable = BME68X_ENABLE;
 	gas_heatr_conf.heatr_temp = 320; // 320*C
 	gas_heatr_conf.heatr_dur = 150;  //  150 ms
 
-	rslt = bme68x_set_heatr_conf(BME68X_FORCED_MODE, &gas_heatr_conf, &dev);
+	ret = bme68x_set_heatr_conf(BME68X_FORCED_MODE, &gas_heatr_conf, &dev);
+	is_init = (ret == BME68X_OK);
+	if (!is_init) {
+		log::error("BME680: bme68x_set_heatr_conf failed ({})", ret);
+		return is_init;
+	}
 
-	fmt::print("SetHeaterConf Result: {}", rslt);
+	log::info("BME680: Successfully initialized");
+	return is_init;
 }
 
 BME680::Data BME680::Sample() {
 	struct bme68x_data data;
 	uint8_t n_fields;
 
-	fmt::print("Getting sensor data");
-
-	int8_t rslt = bme68x_get_data(BME68X_FORCED_MODE, &data, &n_fields, &dev);
-	fmt::print("GetData Result: {}", rslt);
+	log::debug("Getting sensor data");
+	int8_t ret = bme68x_get_data(BME68X_FORCED_MODE, &data, &n_fields, &dev);
+	log::info("GetData Result: {}", ret);
 
 	BME680::Data out{};
 	if (n_fields) {
@@ -100,7 +113,7 @@ BME680::Data BME680::Sample() {
 		out.humidity_rh = data.humidity;
 		out.pressure_Pa = data.pressure;
 
-		fmt::print("data.status 0x{:02X}", data.status);
+		log::info("data.status 0x{:02X}\n", data.status);
 
 		if (data.status & (BME68X_HEAT_STAB_MSK | BME68X_GASM_VALID_MSK)) {
 			// Serial.print("Gas resistance: "); Serial.println(data.gas_resistance);

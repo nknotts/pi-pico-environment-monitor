@@ -8,7 +8,7 @@ namespace sensor {
 
 class BME680 {
 public:
-	BME680();
+	BME680(i2c_inst_t* i2c, uint8_t device_address);
 
 	struct Data {
 		float temperature_C;
@@ -19,9 +19,18 @@ public:
 
 	Data Sample();
 
+	struct I2cDevice {
+		i2c_inst_t* i2c;
+		uint8_t device_address;
+	};
+
 private:
+	bool Init();
+
+	bool is_init = false;
+
 	bme68x_dev dev;
-	i2c_inst_t* i2c;
+	I2cDevice i2c_dev;
 };
 
 } // namespace sensor

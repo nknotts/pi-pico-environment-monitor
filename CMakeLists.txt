@@ -29,7 +29,7 @@ target_link_libraries(EnviroMqtt PRIVATE
     pico_lwip_iperf
     FreeRTOS-Kernel-Heap4 # FreeRTOS kernel and dynamic heap
     fmt)
- 
+
 pico_sdk_init()
 pico_enable_stdio_usb(EnviroMqtt 1)
 pico_enable_stdio_uart(EnviroMqtt 1)
