@@ -70,11 +70,11 @@ bool BME680::Init() {
 		return is_init;
 	}
 
-	gas_conf.filter = BME68X_FILTER_OFF;
+	gas_conf.filter = BME68X_FILTER_SIZE_3;
 	gas_conf.odr = BME68X_ODR_NONE;
-	gas_conf.os_hum = BME68X_OS_16X;
-	gas_conf.os_pres = BME68X_OS_1X;
-	gas_conf.os_temp = BME68X_OS_2X;
+	gas_conf.os_hum = BME68X_OS_2X;
+	gas_conf.os_pres = BME68X_OS_4X;
+	gas_conf.os_temp = BME68X_OS_8X;
 	ret = bme68x_set_conf(&gas_conf, &dev);
 	is_init = (ret == BME68X_OK);
 	if (!is_init) {
@@ -83,8 +83,8 @@ bool BME680::Init() {
 	}
 
 	gas_heatr_conf.enable = BME68X_ENABLE;
-	gas_heatr_conf.heatr_temp = 300;
-	gas_heatr_conf.heatr_dur = 100;
+	gas_heatr_conf.heatr_temp = 320;
+	gas_heatr_conf.heatr_dur = 150;
 
 	ret = bme68x_set_heatr_conf(BME68X_FORCED_MODE, &gas_heatr_conf, &dev);
 	is_init = (ret == BME68X_OK);
