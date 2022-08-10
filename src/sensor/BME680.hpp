@@ -17,7 +17,7 @@ public:
 		float gas_ohm;
 	};
 
-	Data Sample();
+	bool Sample(Data& data);
 
 	struct I2cDevice {
 		i2c_inst_t* i2c;
@@ -29,6 +29,8 @@ private:
 
 	bool is_init = false;
 
+	bme68x_conf gas_conf;
+	bme68x_heatr_conf gas_heatr_conf;
 	bme68x_dev dev;
 	I2cDevice i2c_dev;
 };
