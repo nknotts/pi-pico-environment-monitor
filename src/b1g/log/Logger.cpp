@@ -3,6 +3,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 
+namespace b1g {
 namespace log {
 namespace internal {
 
@@ -18,3 +19,4 @@ void log_time_now() {
 
 } // namespace internal
 } // namespace log
+} // namespace b1g

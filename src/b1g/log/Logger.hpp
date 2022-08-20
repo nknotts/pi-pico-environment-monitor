@@ -7,6 +7,7 @@
 
 #include <cstdint>
 
+namespace b1g {
 namespace log {
 
 namespace internal {
@@ -48,3 +49,4 @@ void error(Args&&... args) {
 }
 
 } // namespace log
+} // namespace b1g

@@ -1,7 +1,7 @@
 #include <secrets.hpp>
 
-#include <log/Logger.hpp>
-#include <sensor/BME680.hpp>
+#include <b1g/log/Logger.hpp>
+#include <b1g/sensor/BME680.hpp>
 
 #include <pico/binary_info.h>
 #include <pico/cyw43_arch.h>
@@ -14,6 +14,8 @@
 #include <task.h>
 
 namespace {
+
+using namespace b1g;
 
 MessageBufferHandle_t sample_stream_buffer;
 constexpr const size_t SAMPLE_BUF_SIZE = 60 * sizeof(sensor::BME680::Data);

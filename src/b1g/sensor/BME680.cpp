@@ -1,6 +1,6 @@
 #include "BME680.hpp"
 
-#include <log/Logger.hpp>
+#include <b1g/log/Logger.hpp>
 
 #include <hardware/i2c.h>
 #include <pico/stdlib.h>
@@ -8,6 +8,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 
+namespace b1g {
 namespace sensor {
 
 namespace {
@@ -139,3 +140,4 @@ bool BME680::Sample(BME680::Data& out) {
 }
 
 } // namespace sensor
+} // namespace b1g

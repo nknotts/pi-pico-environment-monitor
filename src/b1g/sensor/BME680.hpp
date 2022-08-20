@@ -4,6 +4,7 @@
 
 #include <hardware/i2c.h>
 
+namespace b1g {
 namespace sensor {
 
 class BME680 {
@@ -37,3 +38,4 @@ private:
 };
 
 } // namespace sensor
+} // namespace b1g
