@@ -3,6 +3,7 @@
 #include <b1g/log/Logger.hpp>
 #include <b1g/sensor/BME680.hpp>
 
+#include <hardware/watchdog.h>
 #include <pico/binary_info.h>
 #include <pico/cyw43_arch.h>
 #include <pico/stdlib.h>
@@ -25,6 +26,7 @@ void blink_task(__unused void* params) {
 	int counter = 0;
 	auto last_wake_time = xTaskGetTickCount();
 	while (true) {
+		watchdog_update();
 		cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, on);
 		on = !on;
 		vTaskDelayUntil(&last_wake_time, 500);
@@ -34,8 +36,6 @@ void blink_task(__unused void* params) {
 void sample_task(__unused void* params) {
 	const uint sda_pin = 26;
 	const uint scl_pin = 27;
-
-	vTaskDelay(2000); // give tio chance to reconnect
 
 	i2c_inst_t* i2c = i2c1;
 	i2c_init(i2c, 400 * 1000);
@@ -63,19 +63,6 @@ void sample_task(__unused void* params) {
 			log::error("sample_task: Failed to get sample");
 		}
 		vTaskDelayUntil(&last_wake_time, 1000);
-	}
-}
-
-void start_blink_task() {
-	auto task_return = xTaskCreate(blink_task,
-	                               "blink_task",
-	                               configMINIMAL_STACK_SIZE,
-	                               nullptr,
-	                               1,
-	                               nullptr);
-
-	if (task_return != pdPASS) {
-		log::error("blink_task failed: {}", task_return);
 	}
 }
 
@@ -128,15 +115,20 @@ void connect_mqtt(mqtt_client_t* client) {
 
 	mqtt_client_connect(client, &mqtt_server_ip, MQTT_SERVER_PORT, mqtt_connection_cb, nullptr, &mqtt_client_info);
 
-	vTaskDelay(3000);
+	vTaskDelay(5000);
 }
 
 void network_task(__unused void* params) {
-	vTaskDelay(2000); // give tio chance to reconnect
-
 	if (cyw43_arch_init_with_country(CYW43_COUNTRY_USA)) {
 		log::error("WiFi init failed");
 		return;
+	}
+
+	cyw43_arch_enable_sta_mode();
+
+	{
+		auto task_return = xTaskCreate(blink_task, "blink_task", configMINIMAL_STACK_SIZE, nullptr, 1, nullptr);
+		assert(task_return == pdPASS);
 	}
 
 	auto mqtt_client = mqtt_client_new();
@@ -145,40 +137,43 @@ void network_task(__unused void* params) {
 		return;
 	}
 
-	start_blink_task();
-	cyw43_arch_enable_sta_mode();
-
 	sensor::BME680::Data sample_data{};
+	char json_buf[256];
 
 	while (true) {
-		log::info("WiFi loop");
 		if (!is_wifi_connected()) {
 			connect_wifi();
 		} else if (!mqtt_client_is_connected(mqtt_client)) {
 			connect_mqtt(mqtt_client);
 		} else {
-			log::info("connected to mqtt");
-			while (true) {
-				auto len = xMessageBufferReceive(sample_stream_buffer,
-				                                 &sample_data,
-				                                 sizeof(sample_data),
-				                                 0);
-				log::info("sample len: {}", len);
-				if (len == sizeof(sample_data)) {
-					mqtt_publish(mqtt_client, "temp", &sample_data, sizeof(sample_data), 0, 0, mqtt_publish_cb, nullptr);
-				} else {
-					break;
-				}
+			auto len = xMessageBufferReceive(sample_stream_buffer,
+			                                 &sample_data,
+			                                 sizeof(sample_data),
+			                                 2000);
+			if (len == sizeof(sample_data)) {
+				auto len = snprintf(
+				    json_buf,
+				    sizeof(json_buf),
+				    "{\"ttag_ms\": %u, \"temperature_C\":%.1f, \"pressure_Pa\": %.1f, \"humidity_rh\": %.1f, \"gas_ohm\": %.1f}",
+				    sample_data.ttag_ms,
+				    sample_data.temperature_C,
+				    sample_data.pressure_Pa,
+				    sample_data.humidity_rh,
+				    sample_data.gas_ohm);
+
+				mqtt_publish(mqtt_client, "temp", json_buf, len, 0, 1, mqtt_publish_cb, nullptr);
+			} else {
+				break;
 			}
 		}
-
-		vTaskDelay(1000);
 	}
 }
 
 } // namespace
 
 int main() {
+	watchdog_enable(1000, 1);
+
 	auto task_return = xTaskCreate(network_task, "network_task", 2048, nullptr, 1, nullptr);
 	assert(task_return == pdPASS);
 
