@@ -125,6 +125,7 @@ bool BME680::Sample(BME680::Data& out) {
 		return false;
 	}
 
+	out.ttag_ms = xTaskGetTickCount();
 	out.temperature_C = data.temperature;
 	out.humidity_rh = data.humidity;
 	out.pressure_Pa = data.pressure;

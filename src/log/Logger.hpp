@@ -2,6 +2,9 @@
 
 #include <fmt/core.h>
 
+#include <FreeRTOS.h>
+#include <semphr.h>
+
 #include <cstdint>
 
 namespace log {
@@ -13,10 +16,15 @@ void log_time_now();
 
 template <typename... Args>
 void log(const char* level, Args&&... args) {
+	static auto log_mutex = xSemaphoreCreateMutex();
+	xSemaphoreTake(log_mutex, 1000);
+
 	internal::log_time_now();
 	fmt::print(" [{}] ", level);
 	fmt::print(std::forward<Args>(args)...);
 	fmt::print("\n");
+
+	xSemaphoreGive(log_mutex);
 }
 
 template <typename... Args>

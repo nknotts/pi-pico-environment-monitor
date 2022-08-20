@@ -11,6 +11,7 @@ public:
 	BME680(i2c_inst_t* i2c, uint8_t device_address);
 
 	struct Data {
+		uint32_t ttag_ms;
 		float temperature_C;
 		float pressure_Pa;
 		float humidity_rh;
