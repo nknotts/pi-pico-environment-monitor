@@ -9,6 +9,7 @@
 #include <pico/binary_info.h>
 #include <pico/cyw43_arch.h>
 #include <pico/stdlib.h>
+#include <pico/unique_id.h>
 
 #include <lwip/apps/mqtt.h>
 
@@ -23,7 +24,7 @@ namespace {
 using namespace b1g;
 
 MessageBufferHandle_t sample_stream_buffer;
-constexpr const size_t SAMPLE_BUF_SIZE = 60 * sizeof(sensor::BME680::Data);
+constexpr const size_t SAMPLE_BUF_SIZE = MQTT_OUTPUT_RINGBUF_SIZE;
 
 constexpr const size_t CDC_CONNECTED_BUF_SIZE = 8;
 MessageBufferHandle_t cdc_connected_msg_buffer;
@@ -103,6 +104,9 @@ void mqtt_connection_cb(mqtt_client_t*, void*, mqtt_connection_status_t) {
 void mqtt_publish_cb(void*, err_t) {
 }
 
+static char PICO_BOARD_ID[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2 + 1];
+static char ENVIRO_MONITOR_MQTT_CLIENT_NAME[64];
+
 void connect_mqtt(mqtt_client_t* client) {
 	log::info("lets connect to mqtt");
 	ip_addr_t mqtt_server_ip;
@@ -110,7 +114,7 @@ void connect_mqtt(mqtt_client_t* client) {
 
 	static const struct mqtt_connect_client_info_t mqtt_client_info =
 	    {
-	        "pico-w-enviro",
+	        ENVIRO_MONITOR_MQTT_CLIENT_NAME,
 	        NULL, /* user */
 	        NULL, /* pass */
 	        100,  /* keep alive */
@@ -124,6 +128,10 @@ void connect_mqtt(mqtt_client_t* client) {
 
 	vTaskDelay(5000);
 }
+
+constexpr const uint8_t MQTT_QOS = 0;    // lowest reliability - "best effort"
+constexpr const uint8_t MQTT_RETAIN = 1; // store last value for late joiners -  "durability"
+constexpr const char* MQTT_TOPIC_NAME = "enviro-monitor";
 
 void network_task(__unused void* params) {
 	if (cyw43_arch_init_with_country(CYW43_COUNTRY_USA)) {
@@ -146,7 +154,7 @@ void network_task(__unused void* params) {
 
 	sensor::BME680::Data sample_data{};
 	char json_buf[256];
-
+	uint32_t sequence_number{};
 	while (true) {
 		if (!is_wifi_connected()) {
 			connect_wifi();
@@ -161,14 +169,16 @@ void network_task(__unused void* params) {
 				auto len = snprintf(
 				    json_buf,
 				    sizeof(json_buf),
-				    "{\"ttag_ms\": %u, \"temperature_C\":%.1f, \"pressure_Pa\": %.1f, \"humidity_rh\": %.1f, \"gas_ohm\": %.1f}",
+				    "{\"id\": %u, \"client_id\":\"%s\", \"ttag_ms\": %u, \"temperature_C\":%.1f, \"pressure_Pa\": %.1f, \"humidity_rh\": %.1f, \"gas_ohm\": %.1f}",
+				    ++sequence_number,
+				    PICO_BOARD_ID,
 				    sample_data.ttag_ms,
 				    sample_data.temperature_C,
 				    sample_data.pressure_Pa,
 				    sample_data.humidity_rh,
 				    sample_data.gas_ohm);
 
-				mqtt_publish(mqtt_client, "temp", json_buf, len, 0, 1, mqtt_publish_cb, nullptr);
+				mqtt_publish(mqtt_client, MQTT_TOPIC_NAME, json_buf, len, MQTT_QOS, MQTT_RETAIN, mqtt_publish_cb, nullptr);
 			} else {
 				break;
 			}
@@ -206,6 +216,11 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
 
 int main() {
 	watchdog_enable(1000, 1);
+	pico_get_unique_board_id_string(PICO_BOARD_ID, sizeof(PICO_BOARD_ID));
+	snprintf(ENVIRO_MONITOR_MQTT_CLIENT_NAME,
+	         sizeof(ENVIRO_MONITOR_MQTT_CLIENT_NAME),
+	         "b1g-enviro-monitor-%s",
+	         PICO_BOARD_ID);
 
 	auto task_return = xTaskCreate(network_task, "network_task", 2048, nullptr, 1, nullptr);
 	assert(task_return == pdPASS);

@@ -11,6 +11,8 @@ project(EnviroMqtt VERSION 1.0.0)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
+add_definitions(-DMQTT_OUTPUT_RINGBUF_SIZE=1200)
+add_definitions(-DMQTT_REQ_MAX_IN_FLIGHT=60)
  
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 include(AddVersionHeader)
