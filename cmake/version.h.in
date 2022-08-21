@@ -1,0 +1,5 @@
+#pragma once
+
+static const char* VERSION = "@REV@";
+static const char* BUILD_HOST = "@BUILD_HOST@";
+static const char* BUILD_DATE = __DATE__ " " __TIME__;

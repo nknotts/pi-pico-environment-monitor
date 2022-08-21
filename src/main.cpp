@@ -3,6 +3,8 @@
 #include <b1g/log/Logger.hpp>
 #include <b1g/sensor/BME680.hpp>
 
+#include <libEnviroMqtt_version.h>
+
 #include <hardware/watchdog.h>
 #include <pico/binary_info.h>
 #include <pico/cyw43_arch.h>
@@ -14,12 +16,17 @@
 #include <message_buffer.h>
 #include <task.h>
 
+#include <tusb.h>
+
 namespace {
 
 using namespace b1g;
 
 MessageBufferHandle_t sample_stream_buffer;
 constexpr const size_t SAMPLE_BUF_SIZE = 60 * sizeof(sensor::BME680::Data);
+
+constexpr const size_t CDC_CONNECTED_BUF_SIZE = 8;
+MessageBufferHandle_t cdc_connected_msg_buffer;
 
 void blink_task(__unused void* params) {
 	bool on = false;
@@ -169,7 +176,33 @@ void network_task(__unused void* params) {
 	}
 }
 
+void tusb_task(__unused void* params) {
+	while (true) {
+		tud_task();
+		vTaskDelay(1);
+	}
+}
+
+void cdc_connected_task(__unused void* params) {
+	uint8_t itf{};
+	while (true) {
+		auto len = xMessageBufferReceive(cdc_connected_msg_buffer, &itf, 1, 1000);
+		if (len == 1) {
+			log::info("Connected to b1g enviro monitor: {}", VERSION);
+		}
+	}
+}
+
 } // namespace
+
+// Invoked when CDC interface connection status changes
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
+	if (itf == CDC_ITF_LOG && dtr) {
+		BaseType_t taskWoken = pdFALSE;
+		xStreamBufferSendFromISR(cdc_connected_msg_buffer, &itf, 1, &taskWoken);
+		portYIELD_FROM_ISR(taskWoken);
+	}
+}
 
 int main() {
 	watchdog_enable(1000, 1);
@@ -180,10 +213,19 @@ int main() {
 	task_return = xTaskCreate(sample_task, "sample_task", 2048, nullptr, 1, nullptr);
 	assert(task_return == pdPASS);
 
+	task_return = xTaskCreate(tusb_task, "tusb_task", 2048, nullptr, 1, nullptr);
+	assert(task_return == pdPASS);
+
+	task_return = xTaskCreate(cdc_connected_task, "cdc_connected_task", 2048, nullptr, 1, nullptr);
+	assert(task_return == pdPASS);
+
 	sample_stream_buffer = xMessageBufferCreate(SAMPLE_BUF_SIZE);
 	assert(sample_stream_buffer != nullptr);
 
-	stdio_init_all();
+	cdc_connected_msg_buffer = xMessageBufferCreate(CDC_CONNECTED_BUF_SIZE);
+	assert(cdc_connected_msg_buffer != nullptr);
+
+	tusb_init(); // initialize tinyusb stack
 	log::error("Starting FreeRTOS on core 0");
 	vTaskStartScheduler();
 

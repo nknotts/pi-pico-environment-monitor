@@ -4,7 +4,6 @@ cmake_minimum_required(VERSION 3.12)
 set(PICO_BOARD pico_w)
 set(FREERTOS_KERNEL_PATH ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/FreeRTOS-Kernel)
 
-
 include(pico_sdk_import.cmake)
 include(FreeRTOS_Kernel_import.cmake)
  
@@ -13,6 +12,10 @@ project(EnviroMqtt VERSION 1.0.0)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
  
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+include(AddVersionHeader)
+AddVersionHeader(enviro-version EnviroMqtt)
+
 add_subdirectory(thirdparty/fmt)
 
 file(GLOB_RECURSE pico_sources CONFIGURE_DEPENDS
@@ -28,8 +31,9 @@ target_link_libraries(EnviroMqtt PRIVATE
     pico_cyw43_arch_lwip_sys_freertos
     pico_lwip_mqtt
     FreeRTOS-Kernel-Heap4 # FreeRTOS kernel and dynamic heap
+    tinyusb_device_unmarked
+    enviro-version
     fmt)
 
 pico_sdk_init()
-pico_enable_stdio_usb(EnviroMqtt 1)
 pico_add_extra_outputs(EnviroMqtt)
