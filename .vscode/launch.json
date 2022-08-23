@@ -8,7 +8,7 @@
             "executable": "${command:cmake.launchTargetPath}",
             "request": "launch",
             "servertype": "external",
-            "preLaunchTask": "Build Debug",
+            //"preLaunchTask": "Build Debug",
             // This may need to be arm-none-eabi-gdb depending on your system
             "gdbPath": "gdb",
             // Connect to an already running OpenOCD instance
