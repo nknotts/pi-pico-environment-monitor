@@ -5,19 +5,24 @@
 
 #include <libEnviroMqtt_version.h>
 
+#include <hardware/rtc.h>
 #include <hardware/watchdog.h>
 #include <pico/binary_info.h>
 #include <pico/cyw43_arch.h>
 #include <pico/stdlib.h>
 #include <pico/unique_id.h>
+#include <pico/util/datetime.h>
 
 #include <lwip/apps/mqtt.h>
+#include <lwip/apps/sntp.h>
 
 #include <FreeRTOS.h>
 #include <message_buffer.h>
 #include <task.h>
 
 #include <tusb.h>
+
+#include <ctime>
 
 namespace {
 
@@ -28,6 +33,9 @@ constexpr const size_t SAMPLE_BUF_SIZE = MQTT_OUTPUT_RINGBUF_SIZE;
 
 constexpr const size_t CDC_CONNECTED_BUF_SIZE = 8;
 MessageBufferHandle_t cdc_connected_msg_buffer;
+
+constexpr const size_t SNTP_BUF_SIZE = 2 * sizeof(uint32_t);
+MessageBufferHandle_t sntp_msg_buffer;
 
 void blink_task(__unused void* params) {
 	bool on = false;
@@ -81,6 +89,7 @@ bool is_wifi_connected() {
 void connect_wifi() {
 	while (!is_wifi_connected()) {
 		log::info("Connecting to WiFi...");
+		sntp_stop();
 		auto connect_ret = cyw43_arch_wifi_connect_blocking(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK);
 
 		auto link_status = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
@@ -91,6 +100,8 @@ void connect_wifi() {
 			          ((local_IP >> 8) & 0xff),
 			          ((local_IP >> 16) & 0xff),
 			          (local_IP >> 24));
+
+			sntp_init();
 		} else {
 			log::error("Connect failed, retrying");
 			vTaskDelay(1000);
@@ -142,6 +153,14 @@ void network_task(__unused void* params) {
 	cyw43_arch_enable_sta_mode();
 
 	{
+		sntp_setoperatingmode(SNTP_OPMODE_POLL);
+
+		ip_addr_t ntp_ip;
+		ipaddr_aton(NTP_HOST, &ntp_ip);
+		sntp_setserver(0, &ntp_ip);
+	}
+
+	{
 		auto task_return = xTaskCreate(blink_task, "blink_task", configMINIMAL_STACK_SIZE, nullptr, 1, nullptr);
 		assert(task_return == pdPASS);
 	}
@@ -166,13 +185,34 @@ void network_task(__unused void* params) {
 			                                 sizeof(sample_data),
 			                                 2000);
 			if (len == sizeof(sample_data)) {
+				auto tick_now = xTaskGetTickCount();
+				datetime_t date_now;
+				if (!rtc_get_datetime(&date_now)) {
+					continue;
+				}
+
+				struct tm tm_now {};
+				tm_now.tm_year = date_now.year - 1900;
+				tm_now.tm_mon = date_now.month - 1;
+				tm_now.tm_mday = date_now.day;
+				tm_now.tm_wday = date_now.dotw;
+				tm_now.tm_hour = date_now.hour;
+				tm_now.tm_min = date_now.min;
+				tm_now.tm_sec = date_now.sec;
+				tm_now.tm_isdst = false;
+				auto time_now = mktime(&tm_now);
+
+				auto dt_tick = tick_now - sample_data.ttag_ms;
+				int64_t dt_sec = (dt_tick * 1000 + 500) / 1000000; // nearest 1000 ms / 1s
+				int64_t unix_time = time_now - dt_sec;
+
 				auto len = snprintf(
 				    json_buf,
 				    sizeof(json_buf),
-				    "{\"id\": %u, \"client_id\":\"%s\", \"ttag_ms\": %u, \"temperature_C\":%.1f, \"pressure_Pa\": %.1f, \"humidity_rh\": %.1f, \"gas_ohm\": %.1f}",
+				    "{\"id\": %u, \"client_id\":\"%s\", \"ttag_s\": %lld, \"temperature_C\":%.1f, \"pressure_Pa\": %.1f, \"humidity_rh\": %.1f, \"gas_ohm\": %.1f}",
 				    ++sequence_number,
 				    PICO_BOARD_ID,
-				    sample_data.ttag_ms,
+				    unix_time,
 				    sample_data.temperature_C,
 				    sample_data.pressure_Pa,
 				    sample_data.humidity_rh,
@@ -203,6 +243,37 @@ void cdc_connected_task(__unused void* params) {
 	}
 }
 
+void sntp_task(__unused void* params) {
+	uint32_t ntp_sec{};
+	while (true) {
+		auto len = xMessageBufferReceive(sntp_msg_buffer, &ntp_sec, sizeof(ntp_sec), 7200000);
+		if (len == sizeof(ntp_sec)) {
+			static uint32_t ntp_to_unix = (70 * 365 + 17) * 86400U;
+			time_t unix_time = ntp_sec - ntp_to_unix;
+
+			struct tm datetime;
+			gmtime_r(&unix_time, &datetime);
+
+			datetime_t t = {
+			    .year = static_cast<int16_t>(datetime.tm_year + 1900),
+			    .month = static_cast<int8_t>(datetime.tm_mon + 1),
+			    .day = static_cast<int8_t>(datetime.tm_mday),
+			    .dotw = static_cast<int8_t>(datetime.tm_wday), // 0 is Sunday, so 5 is Friday
+			    .hour = static_cast<int8_t>(datetime.tm_hour),
+			    .min = static_cast<int8_t>(datetime.tm_min),
+			    .sec = static_cast<int8_t>(datetime.tm_sec)};
+
+			if (rtc_set_datetime(&t)) {
+				char buf[64];
+				datetime_to_str(buf, sizeof(buf), &t);
+				log::info("Got SNTP Time: {}", buf);
+			} else {
+				log::error("SNTP Time Failed");
+			}
+		}
+	}
+}
+
 } // namespace
 
 // Invoked when CDC interface connection status changes
@@ -212,6 +283,12 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
 		xStreamBufferSendFromISR(cdc_connected_msg_buffer, &itf, 1, &taskWoken);
 		portYIELD_FROM_ISR(taskWoken);
 	}
+}
+
+void sntp_set_system_time_us(uint32_t sec, uint64_t us) {
+	BaseType_t taskWoken = pdFALSE;
+	xMessageBufferSendFromISR(sntp_msg_buffer, &sec, sizeof(sec), &taskWoken);
+	portYIELD_FROM_ISR(taskWoken);
 }
 
 int main() {
@@ -234,13 +311,20 @@ int main() {
 	task_return = xTaskCreate(cdc_connected_task, "cdc_connected_task", 2048, nullptr, 1, nullptr);
 	assert(task_return == pdPASS);
 
+	task_return = xTaskCreate(sntp_task, "sntp_task", 2048, nullptr, 1, nullptr);
+	assert(task_return == pdPASS);
+
 	sample_stream_buffer = xMessageBufferCreate(SAMPLE_BUF_SIZE);
 	assert(sample_stream_buffer != nullptr);
 
 	cdc_connected_msg_buffer = xMessageBufferCreate(CDC_CONNECTED_BUF_SIZE);
 	assert(cdc_connected_msg_buffer != nullptr);
 
+	sntp_msg_buffer = xMessageBufferCreate(SNTP_BUF_SIZE);
+	assert(sntp_msg_buffer != nullptr);
+
 	tusb_init(); // initialize tinyusb stack
+	rtc_init();
 	log::error("Starting FreeRTOS on core 0");
 	vTaskStartScheduler();
 

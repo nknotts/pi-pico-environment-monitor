@@ -30,8 +30,10 @@ target_include_directories(EnviroMqtt PUBLIC thirdparty/BME68x-Sensor-API)
 target_link_libraries(EnviroMqtt PRIVATE 
     pico_stdlib
     hardware_i2c
+    hardware_rtc
     pico_cyw43_arch_lwip_sys_freertos
     pico_lwip_mqtt
+    pico_lwip_sntp
     FreeRTOS-Kernel-Heap4 # FreeRTOS kernel and dynamic heap
     tinyusb_device_unmarked
     enviro-version
