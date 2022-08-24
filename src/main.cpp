@@ -142,7 +142,7 @@ void connect_mqtt(mqtt_client_t* client) {
 
 constexpr const uint8_t MQTT_QOS = 0;    // lowest reliability - "best effort"
 constexpr const uint8_t MQTT_RETAIN = 1; // store last value for late joiners -  "durability"
-constexpr const char* MQTT_TOPIC_NAME = "enviro-monitor";
+static char MQTT_TOPIC_NAME[128];
 
 void network_task(__unused void* params) {
 	if (cyw43_arch_init_with_country(CYW43_COUNTRY_USA)) {
@@ -297,6 +297,10 @@ int main() {
 	snprintf(ENVIRO_MONITOR_MQTT_CLIENT_NAME,
 	         sizeof(ENVIRO_MONITOR_MQTT_CLIENT_NAME),
 	         "b1g-enviro-monitor-%s",
+	         PICO_BOARD_ID);
+	snprintf(MQTT_TOPIC_NAME,
+	         sizeof(MQTT_TOPIC_NAME),
+	         "data/environment-monitor/%s",
 	         PICO_BOARD_ID);
 
 	auto task_return = xTaskCreate(network_task, "network_task", 2048, nullptr, 1, nullptr);
