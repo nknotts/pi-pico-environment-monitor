@@ -28,7 +28,7 @@ namespace {
 
 using namespace b1g;
 
-MessageBufferHandle_t sample_stream_buffer;
+MessageBufferHandle_t sample_msg_buffer;
 constexpr const size_t SAMPLE_BUF_SIZE = MQTT_OUTPUT_RINGBUF_SIZE;
 
 constexpr const size_t CDC_CONNECTED_BUF_SIZE = 8;
@@ -77,7 +77,7 @@ void sample_task(__unused void* params) {
 			          data.humidity_rh,
 			          data.pressure_Pa,
 			          data.gas_ohm);
-			xMessageBufferSend(sample_stream_buffer, &data, sizeof(data), 0);
+			xMessageBufferSend(sample_msg_buffer, &data, sizeof(data), 0);
 		} else {
 			log::error("sample_task: Failed to get sample");
 		}
@@ -206,7 +206,7 @@ void network_task(__unused void* params) {
 		} else if (!mqtt_client_is_connected(mqtt_client)) {
 			connect_mqtt(mqtt_client);
 		} else {
-			auto len = xMessageBufferReceive(sample_stream_buffer,
+			auto len = xMessageBufferReceive(sample_msg_buffer,
 			                                 &sample_data,
 			                                 sizeof(sample_data),
 			                                 2000);
@@ -352,8 +352,8 @@ int main() {
 	task_return = xTaskCreate(sntp_task, "sntp_task", 2048, nullptr, 1, nullptr);
 	assert(task_return == pdPASS);
 
-	sample_stream_buffer = xMessageBufferCreate(SAMPLE_BUF_SIZE);
-	assert(sample_stream_buffer != nullptr);
+	sample_msg_buffer = xMessageBufferCreate(SAMPLE_BUF_SIZE);
+	assert(sample_msg_buffer != nullptr);
 
 	cdc_connected_msg_buffer = xMessageBufferCreate(CDC_CONNECTED_BUF_SIZE);
 	assert(cdc_connected_msg_buffer != nullptr);
