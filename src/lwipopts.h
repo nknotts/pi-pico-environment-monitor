@@ -35,7 +35,7 @@
 #define LWIP_NETIF_STATUS_CALLBACK 1
 #define LWIP_NETIF_LINK_CALLBACK 1
 #define LWIP_NETIF_HOSTNAME 1
-#define LWIP_NETCONN 0
+#define LWIP_NETCONN 1
 #define MEM_STATS 0
 #define SYS_STATS 0
 #define MEMP_STATS 0
@@ -98,3 +98,5 @@
 
 void sntp_set_system_time_us(uint32_t t, uint64_t us);
 #define SNTP_SET_SYSTEM_TIME_NTP sntp_set_system_time_us
+
+#define DEFAULT_UDP_RECVMBOX_SIZE 8

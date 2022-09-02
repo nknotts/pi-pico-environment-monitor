@@ -13,7 +13,7 @@
 #include <pico/unique_id.h>
 #include <pico/util/datetime.h>
 
-#include <lwip/apps/mqtt.h>
+#include <lwip/api.h>
 #include <lwip/apps/sntp.h>
 
 #include <FreeRTOS.h>
@@ -36,9 +36,6 @@ MessageBufferHandle_t cdc_connected_msg_buffer;
 
 constexpr const size_t SNTP_BUF_SIZE = 2 * sizeof(uint32_t);
 MessageBufferHandle_t sntp_msg_buffer;
-
-constexpr const size_t MQTT_CONNECTION_BUF_SIZE = 4 * sizeof(mqtt_connection_status_t);
-MessageBufferHandle_t mqtt_connection_msg_buffer;
 
 void blink_task(__unused void* params) {
 	bool on = false;
@@ -112,15 +109,6 @@ void connect_wifi() {
 	}
 }
 
-void mqtt_connection_cb(mqtt_client_t*, void*, mqtt_connection_status_t status) {
-	BaseType_t taskWoken = pdFALSE;
-	xMessageBufferSendFromISR(mqtt_connection_msg_buffer, &status, sizeof(status), &taskWoken);
-	portYIELD_FROM_ISR(taskWoken);
-}
-
-void mqtt_publish_cb(void*, err_t) {
-}
-
 static char PICO_BOARD_ID[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2 + 1];
 static char ENVIRO_MONITOR_MQTT_CLIENT_NAME[64];
 
@@ -131,46 +119,6 @@ void software_reset() {
 	// watchdog_reboot(0, 0, 0);
 }
 
-void connect_mqtt(mqtt_client_t* client) {
-	log::info("MQTT Begin Connect");
-	ip_addr_t mqtt_server_ip;
-	ipaddr_aton(MQTT_SERVER_HOST, &mqtt_server_ip);
-
-	static const struct mqtt_connect_client_info_t mqtt_client_info =
-	    {
-	        ENVIRO_MONITOR_MQTT_CLIENT_NAME,
-	        NULL, /* user */
-	        NULL, /* pass */
-	        100,  /* keep alive */
-	        NULL, /* will_topic */
-	        NULL, /* will_msg */
-	        0,    /* will_qos */
-	        0     /* will_retain */
-	    };
-
-	auto err = mqtt_client_connect(client, &mqtt_server_ip, MQTT_SERVER_PORT, mqtt_connection_cb, nullptr, &mqtt_client_info);
-	if (err != ERR_OK) {
-		// Not sure why, but after disconnect, unable to properly reconnect
-		// resetting the pico works robustly, if not heavy handed
-		log::error("MQTT Client Connect Error: {}", static_cast<int>(err));
-		vTaskDelay(200); // give time for log to
-		software_reset();
-	}
-
-	mqtt_connection_status_t status;
-	auto len = xMessageBufferReceive(mqtt_connection_msg_buffer,
-	                                 &status,
-	                                 sizeof(status),
-	                                 120000);
-	if (len == sizeof(status)) {
-		log::info("MQTT Connection Result: {}", static_cast<int>(status));
-	} else {
-		log::error("MQTT Connection Timed out");
-	}
-}
-
-constexpr const uint8_t MQTT_QOS = 0;    // lowest reliability - "best effort"
-constexpr const uint8_t MQTT_RETAIN = 1; // store last value for late joiners -  "durability"
 static char MQTT_TOPIC_NAME[128];
 
 void network_task(__unused void* params) {
@@ -194,8 +142,14 @@ void network_task(__unused void* params) {
 		assert(task_return == pdPASS);
 	}
 
-	auto mqtt_client = mqtt_client_new();
-	assert(mqtt_client != nullptr);
+	auto udp_connection = netconn_new(NETCONN_UDP);
+	assert(udp_connection != nullptr);
+
+	auto udp_buf = netbuf_new();
+	assert(udp_buf != nullptr);
+
+	ip_addr_t recv_host;
+	ipaddr_aton(JSON_RECV_HOST, &recv_host);
 
 	sensor::BME680::Data sample_data{};
 	char json_buf[256];
@@ -203,8 +157,6 @@ void network_task(__unused void* params) {
 	while (true) {
 		if (!is_wifi_connected()) {
 			connect_wifi();
-		} else if (!mqtt_client_is_connected(mqtt_client)) {
-			connect_mqtt(mqtt_client);
 		} else {
 			auto len = xMessageBufferReceive(sample_msg_buffer,
 			                                 &sample_data,
@@ -235,7 +187,8 @@ void network_task(__unused void* params) {
 				auto len = snprintf(
 				    json_buf,
 				    sizeof(json_buf),
-				    "{\"id\": %u, \"client_id\":\"%s\", \"ttag_s\": %lld, \"temperature_C\":%.1f, \"pressure_Pa\": %.1f, \"humidity_rh\": %.1f, \"gas_ohm\": %.1f}",
+				    "{\"topic\":\"%s\", \"payload\": {\"id\": %u, \"client_id\":\"%s\", \"ttag_s\": %lld, \"temperature_C\":%.1f, \"pressure_Pa\": %.1f, \"humidity_rh\": %.1f, \"gas_ohm\": %.1f}}",
+				    MQTT_TOPIC_NAME,
 				    ++sequence_number,
 				    PICO_BOARD_ID,
 				    unix_time,
@@ -244,15 +197,21 @@ void network_task(__unused void* params) {
 				    sample_data.humidity_rh,
 				    sample_data.gas_ohm);
 
-				auto ret = mqtt_publish(mqtt_client, MQTT_TOPIC_NAME, json_buf, len, MQTT_QOS, MQTT_RETAIN, mqtt_publish_cb, nullptr);
+				auto ret = netbuf_ref(udp_buf, json_buf, len);
 				if (ret != ERR_OK) {
-					// Not sure why, but after disconnect, unable to properly reconnect
-					// resetting the pico works robustly, if not heavy handed
-					log::error("MQTT Publish Failed: {}", ret);
-					vTaskDelay(200); // give time for log to flush
+					log::error("netbuf_ref failed ({}), resetting", ret);
+					vTaskDelay(200);
 					software_reset();
 				}
-				// TODO: in mqtt_publish_cb, publish to a message buffer and wait for result here
+				ret = netconn_sendto(udp_connection, udp_buf, &recv_host, JSON_RECV_PORT);
+				if (ret != ERR_OK) {
+					log::error("netconn_sendto failed ({}), resetting", ret);
+					vTaskDelay(200);
+					software_reset();
+				}
+
+				log::info("Sending: {} - {:.1f} {:.1f}", MQTT_TOPIC_NAME, sample_data.temperature_C, sample_data.humidity_rh);
+
 			} else {
 				break;
 			}
@@ -360,9 +319,6 @@ int main() {
 
 	sntp_msg_buffer = xMessageBufferCreate(SNTP_BUF_SIZE);
 	assert(sntp_msg_buffer != nullptr);
-
-	mqtt_connection_msg_buffer = xMessageBufferCreate(MQTT_CONNECTION_BUF_SIZE);
-	assert(mqtt_connection_msg_buffer != nullptr);
 
 	tusb_init(); // initialize tinyusb stack
 	rtc_init();
