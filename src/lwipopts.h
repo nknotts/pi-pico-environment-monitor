@@ -100,3 +100,4 @@ void sntp_set_system_time_us(uint32_t t, uint64_t us);
 #define SNTP_SET_SYSTEM_TIME_NTP sntp_set_system_time_us
 
 #define DEFAULT_UDP_RECVMBOX_SIZE 8
+#define DEFAULT_TCP_RECVMBOX_SIZE 8
