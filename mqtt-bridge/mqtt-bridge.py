@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
 
-
 import json
 import socket
 import argparse
 import logging
-import re
 
 import paho.mqtt.client as mqtt
 
 
-def publish_home_assistant_config(client: mqtt.Client, topic_name: str):
-    logging.info(f"Publishing HA Config for '{topic_name}'")
+def location_name_split(location: str):
+    return '_'.join(location.split()).lower()
 
-    name = topic_name.split('/')[-1]
-    title = name[:1].upper() + name[1:]
-    title_split = ' '.join(re.findall('[A-Z][^A-Z]*', title))
+
+def topic_name(location: str):
+    return f"data/environment-monitor/{location_name_split(location)}"
+
+
+def publish_home_assistant_config(client: mqtt.Client, location: str):
+    logging.info(f"Publishing HA Config for '{topic_name(location)}'")
+
+    location_split = location_name_split(location)
 
     client.publish(
-        topic=f"homeassistant/sensor/sensor{title}T/config",
+        topic=f"homeassistant/sensor/sensor_{location_split}_T/config",
         payload=json.dumps({
             "device_class": "temperature",
-            "name": f"{title_split} Temperature",
-            "state_topic": topic_name,
+            "name": f"{location.title()} Temperature",
+            "state_topic": topic_name(location),
             "unit_of_measurement": "°C",
             "value_template": "{{ value_json.temperature_C }}"
         }),
@@ -30,11 +34,11 @@ def publish_home_assistant_config(client: mqtt.Client, topic_name: str):
         retain=True)
 
     client.publish(
-        topic=f"homeassistant/sensor/sensor{title}H/config",
+        topic=f"homeassistant/sensor/sensor_{location_split}_H/config",
         payload=json.dumps({
             "device_class": "humidity",
-            "name": f"{title_split} Humidity",
-            "state_topic": topic_name,
+            "name": f"{location.title()} Humidity",
+            "state_topic": topic_name(location),
             "unit_of_measurement": "%",
             "value_template": "{{ value_json.humidity_rh }}"
         }),
@@ -48,12 +52,12 @@ def main(udp_host, udp_port, mqtt_host):
     sock.bind((udp_host, udp_port))
     logging.info(f"Listening on UDP {udp_host}: {udp_port}")
 
-    known_topics = set()
+    known_locations = set()
 
     def on_connect(client, userdata, flags, rc):
         logging.info(f"MQTT Host {mqtt_host} Connected")
-        for topic in known_topics:
-            publish_home_assistant_config(client, topic)
+        for location in known_locations:
+            publish_home_assistant_config(client, location)
 
     mqttc = mqtt.Client()
     mqttc.on_connect = on_connect
@@ -65,14 +69,15 @@ def main(udp_host, udp_port, mqtt_host):
     while True:
         buf = sock.recv(1024)
         data = json.loads(buf)
-        topic = data['topic']
-        payload = json.dumps(data['payload'])
-        logging.debug(f"Topic \"{topic}\", Payload: {payload}")
-        mqttc.publish(topic, payload)
+        location = data['location']
+        topic = topic_name(location)
 
-        if not topic in known_topics:
-            known_topics.add(topic)
-            publish_home_assistant_config(mqttc, topic)
+        logging.debug(f"Topic \"{topic}\", Payload: {buf}")
+        mqttc.publish(topic, buf)
+
+        if not location in known_locations:
+            known_locations.add(location)
+            publish_home_assistant_config(mqttc, location)
 
 
 if __name__ == '__main__':

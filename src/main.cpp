@@ -68,7 +68,7 @@ void sample_task(__unused void* params) {
 	auto last_wake_time = xTaskGetTickCount();
 	while (true) {
 		if (aht.Sample(data)) {
-			log::info("sample_task: {:.1f} C, {:.1f} %RH",
+			log::info("sample_task:  {:.1f} C, {:.1f} %RH",
 			          data.temperature_C,
 			          data.humidity_rh);
 			xMessageBufferSend(sample_msg_buffer, &data, sizeof(data), 0);
@@ -107,7 +107,6 @@ void connect_wifi() {
 }
 
 static char PICO_BOARD_ID[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2 + 1];
-static char ENVIRO_MONITOR_MQTT_CLIENT_NAME[64];
 
 void software_reset() {
 	// https://forums.raspberrypi.com/viewtopic.php?t=318747#p1928868
@@ -184,8 +183,7 @@ void network_task(__unused void* params) {
 				auto len = snprintf(
 				    json_buf,
 				    sizeof(json_buf),
-				    "{\"topic\":\"%s\", \"payload\": {\"id\": %u, \"client_id\":\"%s\", \"location\": \"%s\", \"ttag_s\": %lld, \"temperature_C\":%.1f, \"humidity_rh\": %.1f}}",
-				    MQTT_TOPIC_NAME,
+				    "{\"id\": %u, \"client_id\":\"%s\", \"location\": \"%s\", \"ttag_s\": %lld, \"temperature_C\":%.1f, \"humidity_rh\": %.1f}",
 				    ++sequence_number,
 				    PICO_BOARD_ID,
 				    CLIENT_NAME,
@@ -206,7 +204,7 @@ void network_task(__unused void* params) {
 					software_reset();
 				}
 
-				log::info("Sending: {} - {:.1f} {:.1f}", MQTT_TOPIC_NAME, sample_data.temperature_C, sample_data.humidity_rh);
+				log::info("network_task: {:.1f} C, {:.1f} %RH", sample_data.temperature_C, sample_data.humidity_rh);
 
 			} else {
 				break;
@@ -283,14 +281,6 @@ void sntp_set_system_time_us(uint32_t sec, uint64_t us) {
 int main() {
 	watchdog_enable(1000, 1);
 	pico_get_unique_board_id_string(PICO_BOARD_ID, sizeof(PICO_BOARD_ID));
-	snprintf(ENVIRO_MONITOR_MQTT_CLIENT_NAME,
-	         sizeof(ENVIRO_MONITOR_MQTT_CLIENT_NAME),
-	         "b1g-enviro-monitor-%s",
-	         CLIENT_NAME);
-	snprintf(MQTT_TOPIC_NAME,
-	         sizeof(MQTT_TOPIC_NAME),
-	         "data/environment-monitor/%s",
-	         CLIENT_NAME);
 
 	auto task_return = xTaskCreate(network_task, "network_task", 2048, nullptr, 1, nullptr);
 	assert(task_return == pdPASS);
