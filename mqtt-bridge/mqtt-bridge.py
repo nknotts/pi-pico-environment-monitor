@@ -5,8 +5,41 @@ import json
 import socket
 import argparse
 import logging
+import re
 
 import paho.mqtt.client as mqtt
+
+
+def publish_home_assistant_config(client: mqtt.Client, topic_name: str):
+    logging.info(f"Publishing HA Config for '{topic_name}'")
+
+    name = topic_name.split('/')[-1]
+    title = name[:1].upper() + name[1:]
+    title_split = ' '.join(re.findall('[A-Z][^A-Z]*', title))
+
+    client.publish(
+        topic=f"homeassistant/sensor/sensor{title}T/config",
+        payload=json.dumps({
+            "device_class": "temperature",
+            "name": f"{title_split} Temperature",
+            "state_topic": topic_name,
+            "unit_of_measurement": "°C",
+            "value_template": "{{ value_json.temperature_C }}"
+        }),
+        qos=1,
+        retain=True)
+
+    client.publish(
+        topic=f"homeassistant/sensor/sensor{title}H/config",
+        payload=json.dumps({
+            "device_class": "humidity",
+            "name": f"{title_split} Humidity",
+            "state_topic": topic_name,
+            "unit_of_measurement": "%",
+            "value_template": "{{ value_json.humidity_rh }}"
+        }),
+        qos=1,
+        retain=True)
 
 
 def main(udp_host, udp_port, mqtt_host):
@@ -15,9 +48,18 @@ def main(udp_host, udp_port, mqtt_host):
     sock.bind((udp_host, udp_port))
     logging.info(f"Listening on UDP {udp_host}: {udp_port}")
 
+    known_topics = set()
+
+    def on_connect(client, userdata, flags, rc):
+        logging.info(f"MQTT Host {mqtt_host} Connected")
+        for topic in known_topics:
+            publish_home_assistant_config(client, topic)
+
     mqttc = mqtt.Client()
+    mqttc.on_connect = on_connect
+    mqttc.on_disconnect = lambda client, userdata, rc: logging.warning(
+        f"MQTT Host {mqtt_host} Disconnected")
     mqttc.connect(mqtt_host)
-    logging.info(f"Connected to MQTT Host {mqtt_host}")
     mqttc.loop_start()
 
     while True:
@@ -25,9 +67,12 @@ def main(udp_host, udp_port, mqtt_host):
         data = json.loads(buf)
         topic = data['topic']
         payload = json.dumps(data['payload'])
-        logging.info(f"{topic}")
-        logging.debug(f"{payload}")
+        logging.debug(f"Topic \"{topic}\", Payload: {payload}")
         mqttc.publish(topic, payload)
+
+        if not topic in known_topics:
+            known_topics.add(topic)
+            publish_home_assistant_config(mqttc, topic)
 
 
 if __name__ == '__main__':
