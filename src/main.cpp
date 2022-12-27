@@ -1,7 +1,6 @@
 #include <secrets.hpp>
 
 #include <b1g/log/Logger.hpp>
-#include <b1g/mqtt/EncodeMqtt.hpp>
 #include <b1g/sensor/AHT21.hpp>
 
 #include <libEnviroMqtt_version.h>
@@ -140,15 +139,17 @@ void network_task(__unused void* params) {
 		assert(task_return == pdPASS);
 	}
 
-	auto tcp_connection = netconn_new(NETCONN_TCP);
-	assert(tcp_connection != nullptr);
+	auto udp_connection = netconn_new(NETCONN_UDP);
+	assert(udp_connection != nullptr);
 
-	ip_addr_t mqtt_broker_host;
-	ipaddr_aton(MQTT_BROKER_HOST, &mqtt_broker_host);
+	auto udp_buf = netbuf_new();
+	assert(udp_buf != nullptr);
+
+	ip_addr_t recv_host;
+	ipaddr_aton(JSON_RECV_HOST, &recv_host);
 
 	sensor::AHT21::Data sample_data{};
-	uint8_t write_buf[256];
-	char payload_buf[256];
+	char json_buf[256];
 	uint32_t sequence_number{};
 	while (true) {
 		if (!is_wifi_connected()) {
@@ -180,10 +181,11 @@ void network_task(__unused void* params) {
 				int64_t dt_sec = (dt_tick * 1000 + 500) / 1000000; // nearest 1000 ms / 1s
 				int64_t unix_time = time_now - dt_sec;
 
-				auto payload_len = snprintf(
-				    payload_buf,
-				    sizeof(payload_buf),
-				    "{\"id\": %u, \"client_id\": \"%s\", \"location\": \"%s\", \"ttag_s\": %lld, \"temperature_C\": %.1f, \"humidity_rh\": %.1f}",
+				auto len = snprintf(
+				    json_buf,
+				    sizeof(json_buf),
+				    "{\"topic\":\"%s\", \"payload\": {\"id\": %u, \"client_id\":\"%s\", \"location\": \"%s\", \"ttag_s\": %lld, \"temperature_C\":%.1f, \"humidity_rh\": %.1f}}",
+				    MQTT_TOPIC_NAME,
 				    ++sequence_number,
 				    PICO_BOARD_ID,
 				    CLIENT_NAME,
@@ -191,45 +193,21 @@ void network_task(__unused void* params) {
 				    sample_data.temperature_C,
 				    sample_data.humidity_rh);
 
-				len = b1g::mqtt::EncodeMqttPublish(
-				    write_buf,
-				    MQTT_TOPIC_NAME,
-				    strlen(MQTT_TOPIC_NAME),
-				    payload_buf,
-				    payload_len);
+				auto ret = netbuf_ref(udp_buf, json_buf, len);
+				if (ret != ERR_OK) {
+					log::error("netbuf_ref failed ({}), resetting", ret);
+					vTaskDelay(200);
+					software_reset();
+				}
+				ret = netconn_sendto(udp_connection, udp_buf, &recv_host, JSON_RECV_PORT);
+				if (ret != ERR_OK) {
+					log::error("netconn_sendto failed ({}), resetting", ret);
+					vTaskDelay(200);
+					software_reset();
+				}
 
 				log::info("Sending: {} - {:.1f} {:.1f}", MQTT_TOPIC_NAME, sample_data.temperature_C, sample_data.humidity_rh);
-				auto ret = netconn_write(tcp_connection, write_buf, len, NETCONN_COPY);
-				if (ret == ERR_CONN) {
-					log::error("Failed to send mqtt message ({}), reconnecting...", ret);
 
-					ret = netconn_connect(tcp_connection, &mqtt_broker_host, MQTT_BROKER_PORT);
-					log::info("TCP Connect: {}", ret);
-					if (ret == ERR_OK) {
-						auto len = b1g::mqtt::EncodeMqttConnect(
-						    write_buf,
-						    ENVIRO_MONITOR_MQTT_CLIENT_NAME,
-						    strlen(ENVIRO_MONITOR_MQTT_CLIENT_NAME));
-						ret = netconn_write(tcp_connection, write_buf, len, NETCONN_COPY);
-						log::info("MQTT Connect Sent: {}", ret);
-					} else if (ret == ERR_CLSD) {
-						log::info("TCP Connection is closed, recreating");
-
-						ret = netconn_delete(tcp_connection);
-						if (ret != ERR_OK) {
-							log::error("netconn_delete failed ({}), resetting", ret);
-							vTaskDelay(200);
-							software_reset();
-						}
-
-						tcp_connection = netconn_new(NETCONN_TCP);
-						if (tcp_connection == nullptr) {
-							log::error("netconn_new failed, resetting");
-							vTaskDelay(200);
-							software_reset();
-						}
-					}
-				}
 			} else {
 				break;
 			}
